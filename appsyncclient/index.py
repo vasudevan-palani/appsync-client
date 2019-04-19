@@ -7,21 +7,47 @@ import paho.mqtt.client as mqtt
 import ssl
 import time
 
-regionDefault = os.environ.get("region","us-east-1")
-appsyncUrlDefault = os.environ.get("appsync_url","")
+import logging
 
+from .awssigner import AwsSigner
+
+API_KEY = "API_KEY"
+AWS_IAM = "AWS_IAM"
+
+logger = logging.getLogger("appsync-client")
 
 class AppSyncClient():
     def __init__(self,*args,**kargs):
         pass
 
     def execute(self,**kargs):
-        region = kargs.get("region") if kargs.get("region") else regionDefault
-        url = kargs.get("url") if kargs.get("url") else appsyncUrlDefault
+        region = kargs.get("region")
+        url = kargs.get("url")
         data = kargs.get("data")
         callback = kargs.get("callback")
         method = kargs.get("method","POST")
-        headers = self.getHeaders(url,method,region,data)
+        authenticationType = kargs.get("authenticationType",API_KEY)
+        apiId = kargs.get("api_id")
+        apiKey = kargs.get("api_key")
+
+        if (apiId == None and apiKey == None):
+            logger.error("region, (apiId or apiKey) should be available")
+            raise Exception("configuration error")
+
+        if apiId != None and url == None:
+            url = self.getUrl(apiId,region)
+            if url == None:
+                logger.error("appsync url unavailable")
+                raise Exception("configuration error")
+
+            logger.info("Retrieved appsync url : "+str(url))
+
+        if authenticationType == API_KEY:
+            logger.info("Connecting with API_KEY")
+            headers = self.getHeaders(region,apiId,apiKey)
+        if authenticationType == AWS_IAM:
+            logger.info("Connecting with IAM")
+            headers = AwsSigner().getSignedHeaders(url,method,region,data)
 
         response = self.sendRequest(url,method,data,headers)
 
@@ -31,24 +57,35 @@ class AppSyncClient():
 
         return response
 
+    def getUrl(self,apiId,region):
+        appsyncbotoclient = boto3.client("appsync",region_name = region)
+        response = appsyncbotoclient.get_graphql_api(apiId=apiId)
+        return response.get("graphqlApi",{}).get("uris",{}).get("GRAPHQL",None)
+
     def sendRequest(self,url,method,data,headers):
+        logger.info("Sending request")
+        logger.debug("data  : "+str(data))
+        logger.debug("headers  : "+str(headers))
         response = requests.post(url,data=data,headers=headers)
+        logger.debug("response  : "+str(response.json()))
         return response.json()
 
-    def sign(self,key, msg):
-        return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+    def getApiKey(self,region,apiId):
+        appsyncbotoclient = boto3.client("appsync",region_name = region)
+        response = appsyncbotoclient.list_api_keys(apiId=apiId)
+        apiKey = None
+        for keyItem in response.get("apiKeys",[]):
+            if int(keyItem.get("expires")) > int(time.time()):
+                apiKey = keyItem.get("id")
 
-    def getSignatureKey(self,key, date_stamp, regionName, serviceName):
-        kDate = self.sign(('AWS4' + key).encode('utf-8'), date_stamp)
-        kRegion = self.sign(kDate, regionName)
-        kService = self.sign(kRegion, serviceName)
-        kSigning = self.sign(kService, 'aws4_request')
-        return kSigning
+        if(apiKey == None):
+            apiKey = appsyncbotoclient.create_api_key(apiId=apiId).get("apiKey",{}).get("id",None)
+        return apiKey
 
     def subscribe(self,clientId,wsUrl,topic,callback):
         # The callback for when the client receives a CONNACK response from the server.
         def on_connect(client, userdata, flags, rc):
-            print("Connected with result code " + str(rc))
+            logger.info("Connected to mqtt with result code  : "+str(rc))
 
             # Subscribing in on_connect() means that if we lose the connection and
             # reconnect then subscriptions will be renewed.
@@ -68,12 +105,13 @@ class AppSyncClient():
         client.ws_set_options(path="{}?{}".format(urlparts.path, urlparts.query), headers=headers)
         client.tls_set(cert_reqs=ssl.CERT_NONE)
         client.tls_insecure_set(True)
+        logger.warn("Using insecure SSL handshake...")
+        logger.info("Connecting to "+str(wsUrl))
 
-
-        print("trying to connect now....")
         client.connect(urlparts.netloc, 443)
 
         client.loop_start()
+        logger.info("Started listener...")
 
     def getSubscriptionDetails(self,response):
 
@@ -88,45 +126,11 @@ class AppSyncClient():
 
         return (None,None,None)
 
-
-
-    def getHeaders(self,url,method,region,data):
-        service = 'appsync'
-        creds = boto3.Session().get_credentials()
-        access_key = creds.access_key
-        secret_key = creds.secret_key
-        if access_key is None or secret_key is None:
-            logger.error("No credentials available")
-            sys.exit()
-
-        t = datetime.datetime.utcnow()
-        amz_date = t.strftime('%Y%m%dT%H%M%SZ')
-        date_stamp = t.strftime('%Y%m%d')
-
-        urldetails = urlparse(url)
-        canonical_uri = urldetails.path
-
-        canonical_querystring = urldetails.query
-
-        host = urldetails.netloc
-
-        content_type = 'application/x-amz-json-1.0'
-
-        canonical_headers = 'content-type:' + content_type + '\n' + 'host:' + host + '\n' + 'x-amz-date:' + amz_date + '\n'
-
-        signed_headers = 'content-type;host;x-amz-date'
-
-        payload_hash = hashlib.sha256(data.encode('utf-8')).hexdigest()
-        canonical_request = method + '\n' + canonical_uri + '\n' + canonical_querystring + '\n' + canonical_headers + '\n' + signed_headers + '\n' + payload_hash
-
-        algorithm = 'AWS4-HMAC-SHA256'
-        credential_scope = date_stamp + '/' + region + '/' + service + '/' + 'aws4_request'
-        string_to_sign = algorithm + '\n' +  amz_date + '\n' +  credential_scope + '\n' +  hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()
-        signing_key = self.getSignatureKey(secret_key, date_stamp, region, service)
-        signature = hmac.new(signing_key, (string_to_sign).encode('utf-8'), hashlib.sha256).hexdigest()
-        authorization_header = algorithm + ' ' + 'Credential=' + access_key + '/' + credential_scope + ', ' +  'SignedHeaders=' + signed_headers + ', ' + 'Signature=' + signature
-        headers = {'Content-Type':content_type,
-                   'X-Amz-Date':amz_date,
-                   'Authorization':authorization_header}
-
-        return headers
+    def getHeaders(self,region,apiId,apiKey):
+        if(apiKey == None):
+            apiKey = self.getApiKey(region,apiId)
+            logger.info("Retrieved appsync apiKey : OK")
+        return {
+            'Content-Type': 'application/json',
+            'X-Api-Key': apiKey
+        }
