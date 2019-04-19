@@ -22,15 +22,15 @@ class AppSyncClient():
         self.url = kargs.get("url")
         self.method = kargs.get("method","POST")
         self.authenticationType = kargs.get("authenticationType",API_KEY)
-        self.apiId = kargs.get("api_id")
-        self.apiKey = kargs.get("api_key")
+        self.apiId = kargs.get("apiId")
+        self.apiKey = kargs.get("apiKey")
 
         if (self.apiId == None and self.apiKey == None) or self.region == None:
             logger.error("region, (apiId or apiKey) should be available")
             raise Exception("configuration error")
 
-        if apiId != None and self.url == None:
-            self.url = self.getUrl(apiId,region)
+        if self.apiId != None and self.url == None:
+            self.url = self.getUrl(self.apiId,self.region)
             if self.url == None:
                 logger.error("appsync url unavailable")
                 raise Exception("configuration error")
