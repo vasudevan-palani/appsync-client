@@ -18,29 +18,37 @@ logger = logging.getLogger("appsync-client")
 
 class AppSyncClient():
     def __init__(self,*args,**kargs):
-        pass
+        self.region = kargs.get("region")
+        self.url = kargs.get("url")
+        self.method = kargs.get("method","POST")
+        self.authenticationType = kargs.get("authenticationType",API_KEY)
+        self.apiId = kargs.get("api_id")
+        self.apiKey = kargs.get("api_key")
 
-    def execute(self,**kargs):
-        region = kargs.get("region")
-        url = kargs.get("url")
-        data = kargs.get("data")
-        callback = kargs.get("callback")
-        method = kargs.get("method","POST")
-        authenticationType = kargs.get("authenticationType",API_KEY)
-        apiId = kargs.get("api_id")
-        apiKey = kargs.get("api_key")
-
-        if (apiId == None and apiKey == None):
+        if (self.apiId == None and self.apiKey == None) or self.region == None:
             logger.error("region, (apiId or apiKey) should be available")
             raise Exception("configuration error")
 
-        if apiId != None and url == None:
-            url = self.getUrl(apiId,region)
-            if url == None:
+        if apiId != None and self.url == None:
+            self.url = self.getUrl(apiId,region)
+            if self.url == None:
                 logger.error("appsync url unavailable")
                 raise Exception("configuration error")
 
-            logger.info("Retrieved appsync url : "+str(url))
+            logger.info("Retrieved appsync url : "+str(self.url))
+
+    def execute(self,data,callback=None):
+
+        if ( data == None ):
+            logger.error("data is required")
+            raise Exception("configuration error, data is required")
+
+        region = self.region
+        url = self.url
+        method = self.method
+        authenticationType = self.authenticationType
+        apiId = self.apiId
+        apiKey = self.apiKey
 
         if authenticationType == API_KEY:
             logger.info("Connecting with API_KEY")
