@@ -21,7 +21,7 @@ class AppSyncClient():
         self.region = kargs.get("region")
         self.url = kargs.get("url")
         self.method = kargs.get("method","POST")
-        self.authenticationType = kargs.get("authenticationType",AWS_IAM)
+        self.authenticationType = kargs.get("authenticationType",API_KEY)
         self.apiId = kargs.get("apiId")
         self.apiKey = kargs.get("apiKey")
 
