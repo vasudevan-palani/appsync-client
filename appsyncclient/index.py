@@ -99,6 +99,11 @@ class AppSyncClient():
             # reconnect then subscriptions will be renewed.
             client.subscribe(topic)
 
+        def on_disconnect(client, userdata, rc):
+            logger.info("In disconnect")
+            if rc != 0:
+                logger.error("Unexpected MQTT disconnection. Will auto-reconnect")
+
         # parse the websockets presigned url
         print(wsUrl)
         urlparts = urlparse(wsUrl)
@@ -110,6 +115,7 @@ class AppSyncClient():
         client = mqtt.Client(client_id=clientId, transport="websockets")
         client.on_connect = on_connect
         client.on_message = callback
+        client.on_disconnect = on_disconnect
 
         client.ws_set_options(path="{}?{}".format(urlparts.path, urlparts.query), headers=headers)
         client.tls_set(cert_reqs=ssl.CERT_NONE)
